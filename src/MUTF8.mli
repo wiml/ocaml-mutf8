@@ -21,6 +21,11 @@ val of_bytes : string -> t
 (** Returns the MUTF8 encoded string value. O(1) *)
 val to_bytes : t -> string
 
+(** Creates a MUTF8 string from a sequence of UTF-16 values. Any
+    sequence of UTF-16 values is valid. Numbers outside the range
+    of 0 to 0xFFFF will raise BatUChar.Out_of_range. *)
+val of_utf16_seq : int Seq.t -> t
+
 (** Creates a MUTF8 string from a sequence of unichars. The sequence
     may contain high-plane characters and/or unpaired surrogates but
     must not contain paired surrogates: providing a sequence with

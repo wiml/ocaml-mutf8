@@ -76,7 +76,7 @@ let mutf8_append buf codepoint =
       (* All higher codepoints get encoded as surrogate pairs. This means
          we convert the codepoint into two UTF-16 values and then convert
          those into UTF-8 sequences individually. *)
-      let h = (codepoint asr 12) - 16 in
+      let h = (codepoint asr 10) - 64 in
       Buffer.add_char buf '\xED';
       Buffer.add_char buf (Char.chr ((h asr 6) lor 0xA0));
       Buffer.add_char buf (Char.chr ((h land 0x3F) lor 0x80));
@@ -119,7 +119,7 @@ let code_at utf8 pos =
 
 let join_surrogate h l =
   0x10000 +
-    ( ( h land 0x3FF ) lsr 10 ) lor
+    ( ( h land 0x3FF ) lsl 10 ) lor
       ( l land 0x3FF )
 
 let ucs_codepoint_at utf8 pos =
@@ -203,7 +203,6 @@ let of_utf8 s =
 (* Conversion functions                                                   *)
 (* ********************************************************************** *)
 
-  
 let to_utf8 { mutf8 = buf; utf16len = _; surrogates; nuls; has_unpaired = _; } =
   if surrogates = 0 && nuls = 0 then
     buf
@@ -232,6 +231,36 @@ let of_uchar_seq s =
        end
   in
   convert s
+
+let of_utf16_seq s =
+  let buf = Buffer.create 32 in
+  let rec convert u16count scount upcount nuls pwh s' =
+    match s' () with
+    | Nil -> { mutf8 = Buffer.contents buf;
+               utf16len = u16count;
+               surrogates = scount;
+               nuls = nuls;
+               has_unpaired = (upcount > 0)
+             }
+    | Cons (utf16, rest) ->
+       if utf16 < 0 || utf16 > 0xFFFF then
+         raise BatUChar.Out_of_range
+       else
+         begin
+           mutf8_append buf utf16;
+           let c' = succ u16count in
+           if pwh && utf16 >= 0xDC00 && utf16 < 0xE000 then
+             convert c' (succ scount) upcount nuls false rest
+           else
+             let upc' = (if pwh then succ upcount else upcount) in
+             if utf16 >= 0xD800 && utf16 < 0xDC00 then
+               convert c' scount upc' nuls true rest
+             else if utf16 = 0 then
+               convert c' scount upc' (succ nuls) false rest
+             else
+               convert c' scount upc' nuls false rest
+         end
+  in convert 0 0 0 0 false s
 
 let to_utf16_seq s =
   seq_of_utf8 s.mutf8
