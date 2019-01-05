@@ -1,0 +1,5 @@
+(library 
+  (name MUTF8)
+  (modules :standard \ test)
+  (libraries batteries)
+)
