@@ -1,6 +1,6 @@
 opam-version: "2.0"
 name: "mutf8"
-version: "0.1~dev"
+version: "0.1~dev2"
 synopsis: "The Modified UTF-8 encoding used by Java and related systems"
 maintainer: "Wim Lewis <wiml@hhhh.org>"
 authors: "Wim Lewis <wiml@hhhh.org>"
@@ -11,4 +11,4 @@ depends: [
   "batteries" { >= "2.0.0" }
 ]
 build: [ "dune" "build" "-p" "mutf8" ]
-dev-repo: "git+https://"
+dev-repo: "git+https://github.com/wiml/ocaml-mutf8.git"

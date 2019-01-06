@@ -1,5 +1,6 @@
 (library 
   (name MUTF8)
+  (public_name mutf8)
   (modules :standard \ test)
   (libraries batteries)
 )
