@@ -71,7 +71,7 @@ let mutf8_append buf codepoint =
       Buffer.add_char buf (Char.chr (((codepoint asr 6) land 0x3F) lor 0x80));
       Buffer.add_char buf (Char.chr ((codepoint land 0x3F) lor 0x80));
     end
-  else if codepoint <= 0x100FFFF then
+  else if codepoint <= 0x10FFFF then
     begin
       (* All higher codepoints get encoded as surrogate pairs. This means
          we convert the codepoint into two UTF-16 values and then convert
@@ -153,16 +153,14 @@ let rec wobbly_to_ucs32' n =
   | Nil -> Nil
   | Cons (v, rest) ->
      if v < 0xD800 || v >= 0xDC00 then
-       Cons (BatUChar.chr v, wobbly_to_ucs32 rest)
+       Cons (v, wobbly_to_ucs32 rest)
      else
        match rest () with
-       | Nil -> Cons (BatUChar.chr v, fun () -> Nil)
+       | Nil -> Cons (v, fun () -> Nil)
        | Cons (s2, rest') when s2 >= 0xDC00 && s2 < 0xE000 ->
-          Cons (BatUChar.chr (join_surrogate v s2), wobbly_to_ucs32 rest' )
-       | Cons (s2, rest') ->
-          let v' = BatUChar.chr v in
-          let s2' = BatUChar.chr s2 in
-          Cons (v', fun () -> Cons (s2', wobbly_to_ucs32 rest'))
+          Cons (join_surrogate v s2, wobbly_to_ucs32 rest' )
+       | Cons (_, _) ->
+          Cons (v, wobbly_to_ucs32 rest)
 and wobbly_to_ucs32 s = (fun () -> wobbly_to_ucs32' (s ()))
 
 let rec strict_to_ucs32' n =

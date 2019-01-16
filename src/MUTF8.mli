@@ -61,8 +61,9 @@ val seq_of_utf8 : ?startbyte:int -> string -> int Seq.t
     outside of the UTF-16 range are also passed through as UCS-32
     values.
 
-    May raise any exception raised by BatUChar.chr. *)
-val wobbly_to_ucs32 : int Seq.t -> BatUChar.t Seq.t
+    This does not return BatUChar.t because BatUChar rejects
+    codepoints in the surrogate range. *)
+val wobbly_to_ucs32 : int Seq.t -> int Seq.t
 
 (** Convert a UTF-16 sequence to a UCS-32 sequence by combining
     surrogate pairs. Unpaired surrogates will cause this funtion to
