@@ -197,9 +197,11 @@ let of_utf8 s =
         has_unpaired = info.has_unpaired; }
     end
 
+
 (* ********************************************************************** *)
 (* Conversion functions                                                   *)
 (* ********************************************************************** *)
+
 
 let to_utf8 { mutf8 = buf; utf16len = _; surrogates; nuls; has_unpaired = _; } =
   if surrogates = 0 && nuls = 0 then
@@ -238,7 +240,7 @@ let of_utf16_seq s =
                utf16len = u16count;
                surrogates = scount;
                nuls = nuls;
-               has_unpaired = (upcount > 0)
+               has_unpaired = pwh || (upcount > 0)
              }
     | Cons (utf16, rest) ->
        if utf16 < 0 || utf16 > 0xFFFF then
@@ -247,8 +249,14 @@ let of_utf16_seq s =
          begin
            mutf8_append buf utf16;
            let c' = succ u16count in
-           if pwh && utf16 >= 0xDC00 && utf16 < 0xE000 then
-             convert c' (succ scount) upcount nuls false rest
+           if utf16 >= 0xDC00 && utf16 < 0xE000 then
+             (* The second half of a surrogate pair *)
+             if pwh then
+               (* ... which followed the first half *)
+               convert c' (succ scount) upcount nuls false rest
+             else
+               (* ... which did not follow the first half *)
+               convert c' scount (succ upcount) nuls false rest
            else
              let upc' = (if pwh then succ upcount else upcount) in
              if utf16 >= 0xD800 && utf16 < 0xDC00 then
@@ -298,11 +306,13 @@ let of_bytes buf =
               info.nul_count <- 1 + info.nul_count;
 
             if value >= 0xD800 && value < 0xDC00 then
+              (* A high surrogate *)
               begin
                 if phs then info.has_unpaired <- true;
                 scan p' true
               end
             else if value >= 0xDC00 && value < 0xE000 then
+              (* A low surrogate *)
               begin
                 if phs then
                   info.surrogate_count <- 1 + info.surrogate_count
@@ -311,8 +321,13 @@ let of_bytes buf =
                 scan p' false
               end
             else
-              scan p' false
+              begin
+                if phs then info.has_unpaired <- true;
+                scan p' false
+              end
           end
+    else
+      if phs then info.has_unpaired <- true;
   in
   scan 0 false;
   { mutf8 = buf;
@@ -337,7 +352,7 @@ let compare a b =
     let rec compare' apos bpos =
       if apos = alen then
         if bpos = blen then
-          0
+          0 (* Not reachable for well-formed MUTF8, due to String.compare fast path *)
         else
           -1
       else if bpos = blen then

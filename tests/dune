@@ -5,3 +5,15 @@
   (libraries MUTF8 oUnit)
 )
 
+(executable
+  (name fuzz)
+  (modules fuzz)
+  (libraries MUTF8 crowbar)
+)
+
+(alias
+  (name runtest)
+  (action (run ./unit.exe)))
+(alias
+  (name runtest)
+  (action (run ./fuzz.exe)))
