@@ -16,23 +16,28 @@ type t = {
     has_unpaired: bool;
   }
 
-type mutf8_info = {
+let debugdump t =
+  let hexof b =
+    (BatString.to_list b) |> List.map (fun f -> BatPrintf.sprintf "%02X" (Char.code f)) |> BatString.concat " "
+  in
+  BatPrintf.printf "--\nrepr: %S\nhex: %s\nu16len: %d (%d surrogates, %d nuls, has-unpaired=%s)\n" t.mutf8 (hexof t.mutf8) t.utf16len t.surrogates t.nuls (if t.has_unpaired then "yes" else "no")
+
+(* Used when tallying up UCS sequences, such as BatUChars or (real) UTF8 *)
+type ucs_utf16_info = {
     mutable utf16len: int;
     mutable surrogate_count: int;
     mutable nul_count: int;
-    mutable has_unpaired: bool;
     mutable is_7bit: bool;
   }
 
-let make_mutf8_info () = {
+let make_ucs_utf16_info () = {
+    is_7bit = true;
     utf16len = 0;
     surrogate_count = 0;
     nul_count = 0;
-    has_unpaired = false;
-    is_7bit = true;
   }
 
-let mutf8_tally info uch =
+let ucs_utf16_tally info uch =
   let codepoint = BatUChar.code uch in
   if codepoint > 0xFFFF then
     begin
@@ -52,6 +57,63 @@ let mutf8_tally info uch =
       if codepoint = 0 then
         info.nul_count <- 1 + info.nul_count; (* Weird MUTF8 rule for NULs *)
     end
+
+let finish_tally info bytes =
+  { mutf8 = bytes;
+    utf16len = info.utf16len;
+    surrogates = info.surrogate_count;
+    nuls = info.nul_count;
+    has_unpaired = false; }
+
+(* Used when tallying up UTF16 sequences which may not be valid
+   encodings of unicode sequences, such as raw u16 sequences, or MUTF8 *)
+type wobbly_utf16_info = {
+    utf16len: int;
+    surrogate_count: int;
+    unpaired_count: int;
+    nul_count: int;
+    prev_was_high: bool;
+  }
+
+let wobbly_info_zero = {
+    utf16len = 0;
+    surrogate_count = 0;
+    unpaired_count = 0;
+    nul_count = 0;
+    prev_was_high = false;
+  }
+
+let wobbly_tally {unpaired_count; utf16len; surrogate_count; nul_count; prev_was_high} utf16 =
+  let c' = succ utf16len in
+  if utf16 >= 0xDC00 && utf16 < 0xE000 then
+    (* The second half of a surrogate pair *)
+    if prev_was_high then
+      (* ... which followed the first half *)
+      {unpaired_count; utf16len = c'; surrogate_count = (succ surrogate_count);
+       nul_count; prev_was_high = false }
+    else
+      (* ... which did not follow the first half *)
+      {unpaired_count = (succ unpaired_count); utf16len = c'; surrogate_count;
+       nul_count; prev_was_high = false }
+  else
+    let upc' = (if prev_was_high then succ unpaired_count else unpaired_count) in
+    if utf16 >= 0xD800 && utf16 < 0xDC00 then
+      {unpaired_count = upc'; utf16len = c'; surrogate_count; nul_count; prev_was_high = true }
+    else if utf16 = 0 then
+      {unpaired_count = upc'; utf16len = c'; surrogate_count;
+       nul_count = (succ nul_count); prev_was_high = false }
+    else
+      {unpaired_count = upc'; utf16len = c'; surrogate_count;
+       nul_count; prev_was_high = false }
+
+let wobbly_finish info buf =
+  { mutf8 = buf;
+    utf16len = info.utf16len;
+    surrogates = info.surrogate_count;
+    nuls = info.nul_count;
+    has_unpaired = info.prev_was_high || (info.unpaired_count > 0);
+  }
+
 
 let mutf8_append buf codepoint =
   if codepoint >= 1 && codepoint <= 127 then
@@ -180,21 +242,17 @@ let rec strict_to_ucs32' n =
 and strict_to_ucs32 s = (fun () -> strict_to_ucs32' (s ()))
 
 let of_utf8 s =
-  let info = make_mutf8_info () in
-  BatUTF8.iter (mutf8_tally info) s;
+  let info = make_ucs_utf16_info () in
+  BatUTF8.iter (ucs_utf16_tally info) s;
   if info.surrogate_count = 0 && info.nul_count = 0 then
     (* The most common case: the MUTF8 encoding is the same as the UTF8 encoding *)
     { mutf8 = s; utf16len = info.utf16len;
-      surrogates = 0; nuls = 0; has_unpaired = info.has_unpaired; }
+      surrogates = 0; nuls = 0; has_unpaired = false; }
   else
     begin
       let buf = Buffer.create ((String.length s) + (2 * info.surrogate_count) + info.nul_count) in
       BatUTF8.iter (fun ch -> mutf8_append buf (BatUChar.code ch)) s;
-      { mutf8 = Buffer.contents buf;
-        utf16len = info.utf16len;
-        surrogates = info.surrogate_count;
-        nuls = info.nul_count;
-        has_unpaired = info.has_unpaired; }
+      finish_tally info (Buffer.contents buf)
     end
 
 
@@ -218,15 +276,15 @@ let to_utf8 { mutf8 = buf; utf16len = _; surrogates; nuls; has_unpaired = _; } =
     Buffer.contents utf8
 
 let of_uchar_seq s =
-  let info = make_mutf8_info () in
+  let info = make_ucs_utf16_info () in
   let buf = Buffer.create 32 in
   let rec convert s' =
     match s' () with
-    | Nil -> { mutf8 = Buffer.contents buf; utf16len = info.utf16len; surrogates = info.surrogate_count; nuls = info.nul_count; has_unpaired = info.has_unpaired; }
+    | Nil -> finish_tally info (Buffer.contents buf)
     | Cons (uch, rest) ->
        begin
          mutf8_append buf (BatUChar.code uch);
-         mutf8_tally info uch;
+         ucs_utf16_tally info uch;
          convert rest
        end
   in
@@ -234,39 +292,18 @@ let of_uchar_seq s =
 
 let of_utf16_seq s =
   let buf = Buffer.create 32 in
-  let rec convert u16count scount upcount nuls pwh s' =
+  let rec convert i s' =
     match s' () with
-    | Nil -> { mutf8 = Buffer.contents buf;
-               utf16len = u16count;
-               surrogates = scount;
-               nuls = nuls;
-               has_unpaired = pwh || (upcount > 0)
-             }
+    | Nil -> wobbly_finish i (Buffer.contents buf)
     | Cons (utf16, rest) ->
        if utf16 < 0 || utf16 > 0xFFFF then
          raise BatUChar.Out_of_range
        else
          begin
            mutf8_append buf utf16;
-           let c' = succ u16count in
-           if utf16 >= 0xDC00 && utf16 < 0xE000 then
-             (* The second half of a surrogate pair *)
-             if pwh then
-               (* ... which followed the first half *)
-               convert c' (succ scount) upcount nuls false rest
-             else
-               (* ... which did not follow the first half *)
-               convert c' scount (succ upcount) nuls false rest
-           else
-             let upc' = (if pwh then succ upcount else upcount) in
-             if utf16 >= 0xD800 && utf16 < 0xDC00 then
-               convert c' scount upc' nuls true rest
-             else if utf16 = 0 then
-               convert c' scount upc' (succ nuls) false rest
-             else
-               convert c' scount upc' nuls false rest
+           convert (wobbly_tally i utf16) rest
          end
-  in convert 0 0 0 0 false s
+  in convert wobbly_info_zero s
 
 let to_utf16_seq s =
   seq_of_utf8 s.mutf8
@@ -289,9 +326,8 @@ let to_utf16_enum s =
 let to_bytes r = r.mutf8
 
 let of_bytes buf =
-  let info = make_mutf8_info () in
   let len = String.length buf in
-  let rec scan p phs =
+  let rec scan i p =
     if p <> len then
       if String.get buf p = '\x00' then
         raise BatUTF8.Malformed_code
@@ -300,41 +336,11 @@ let of_bytes buf =
         if value > 0xFFFF then
           raise BatUTF8.Malformed_code
         else
-          begin
-            info.utf16len <- 1 + info.utf16len;
-            if value = 0 then
-              info.nul_count <- 1 + info.nul_count;
-
-            if value >= 0xD800 && value < 0xDC00 then
-              (* A high surrogate *)
-              begin
-                if phs then info.has_unpaired <- true;
-                scan p' true
-              end
-            else if value >= 0xDC00 && value < 0xE000 then
-              (* A low surrogate *)
-              begin
-                if phs then
-                  info.surrogate_count <- 1 + info.surrogate_count
-                else
-                  info.has_unpaired <- true;
-                scan p' false
-              end
-            else
-              begin
-                if phs then info.has_unpaired <- true;
-                scan p' false
-              end
-          end
+          scan (wobbly_tally i value) p'
     else
-      if phs then info.has_unpaired <- true;
+      wobbly_finish i buf
   in
-  scan 0 false;
-  { mutf8 = buf;
-    utf16len = info.utf16len;
-    surrogates = info.surrogate_count;
-    nuls = info.nul_count;
-    has_unpaired = info.has_unpaired; }
+  scan wobbly_info_zero 0
 
 ;;
 

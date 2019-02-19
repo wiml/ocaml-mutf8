@@ -72,3 +72,4 @@ val wobbly_to_ucs32 : int Seq.t -> int Seq.t
     passed through as UCS-32 values. *)
 val strict_to_ucs32 : int Seq.t -> BatUChar.t Seq.t
 
+val debugdump : t -> unit
